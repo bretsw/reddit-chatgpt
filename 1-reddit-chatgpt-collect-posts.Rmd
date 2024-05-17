@@ -1,0 +1,133 @@
+---
+title: "Generative AI Generating Buzz: Volume, Engagement, and Content of Initial Reactions to ChatGPT in Discussions Across Education-Related Subreddits"
+author: "Bret Staudt Willet"
+date: "2023-04-04"
+output: html_document
+---
+
+## Set Up
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(reticulate)
+library(RedditExtractoR)
+library(anytime)
+library(lubridate)
+```
+
+```{r python-setup, eval=FALSE}
+#version <- "3.11.1"
+#install_python(version)
+#install_miniconda()
+#use_python_version(version)
+#use_python("/Users/kstaudtwillet/.pyenv/versions/3.11.1/bin/python3.11")
+
+#py_config()
+```
+
+```{r condaenv-setup}
+##### create a new environment #####
+#conda_create("~/r-reticulate")
+
+##### indicate that we want to use a specific condaenv #####
+use_condaenv("~/r-reticulate")
+
+##### install Python packages as needed #####
+#conda_install("r-reticulate", "praw")
+#conda_install("r-reticulate", "pmaw")  # install with pip3 install pmaw
+#conda_install("r-reticulate", "datetime")
+#conda_install("r-reticulate", "scipy")
+#conda_install("r-reticulate", "pandas")
+#conda_install("r-reticulate", "seaborn")
+#conda_install("r-reticulate", "matplotlib.pyplot"). # does not install: private package
+
+### import PRAW (will use "r-reticulate" as per call to use_condaenv)
+#scipy <- import("scipy")
+#praw <- import("praw")
+```
+
+```{python setup}
+import pandas as pd
+pd.__file__
+
+import datetime as dt
+dt.__file__
+```
+
+```{r, include=FALSE}
+my_client_id <- Sys.getenv('praw_client_id') 
+my_client_secret <- Sys.getenv('praw_client_token') 
+my_user_agent <- Sys.getenv('praw_user_agent') 
+```
+
+```{python, include=FALSE}
+import praw
+
+reddit = praw.Reddit(
+  client_id = r.my_client_id, 
+  client_secret = r.my_client_secret, 
+  user_agent = r.my_user_agent
+  )
+```
+
+```{python initialize_PushShift}
+from pmaw import PushshiftAPI
+api_praw = PushshiftAPI(praw = reddit)
+```
+
+## Get Posts
+
+```{python}
+start_epoch = int(dt.datetime(2023, 2, 1).timestamp())
+end_epoch = int(dt.datetime(2023, 4, 1).timestamp())
+```
+
+```{r}
+ren <- c(
+  "education", "Teachers", "teachingresources", "edtech",
+  "AdultEducation", "ArtEd", "CSEducation", "ECEProfessionals",
+  "ELATeachers", "highereducation", "historyteachers", "itinerantteachers",
+  "matheducation", "MusicEd", "ScienceTeachers", "slp",
+  "specialed", "TeachersPromote", "TeachersInTransition", "teaching",
+  "Professors", "academia", "instructionaldesign", "TeacherTales", 
+  "OnlineEducation"
+)
+```
+
+```{python}
+#r.ren[0]
+posts_praw = api_praw.search_submissions(q = "chatgpt", 
+  subreddit = "education", 
+  after = start_epoch,
+  before = end_epoch,
+  limit = 100
+)
+
+post_list = [post for post in posts_praw]
+posts_df = pd.DataFrame(post_list)
+```
+
+```{r}
+posts_df_r <- 
+  py$posts_df %>% 
+  select(created_utc, subreddit, id, author, title, selftext, 
+         num_comments, score, ups, downs, upvote_ratio, permalink, url) %>%
+  rename(post_id = id,
+         post_date_time = created_utc,
+         post_text = selftext) %>%
+  mutate(subreddit = stringr::str_remove(permalink, "/"),
+         subreddit = stringr::str_remove_all(subreddit, "/comments.*"),
+         post_date_time = anytime::anytime(post_date_time, asUTC=TRUE),
+         post_date_time = lubridate::ymd_hms(lubridate::as_datetime(post_date_time)),
+         post_date_time = lubridate::with_tz(post_date_time, tzone='US/Eastern'),
+         date = date(post_date_time),
+         year = year(post_date_time)) %>%
+  distinct(post_id, .keep_all = TRUE)
+
+posts_df_r$subreddit[1]; min(posts_df_r$date); max(posts_df_r$date); nrow(posts_df_r)
+```
+
+```{r}
+write_csv(posts_df_r, "./data-gpt/r-education-posts-gpt.csv")
+```

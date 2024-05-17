@@ -1,0 +1,1175 @@
+---
+title: "Generative AI Generating Buzz: Volume, Engagement, and Content of Initial Reactions to ChatGPT in Discussions Across Education-Related Subreddits"
+author: "Bret Staudt Willet"
+date: "2023-11-30"
+output: html_document
+---
+
+--------------------------------------------------------------------------------
+## Set Up
+--------------------------------------------------------------------------------
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(RedditExtractoR)
+library(anytime)
+library(lubridate)
+library(RColorBrewer)
+library(viridis)
+library(scales)
+library(quanteda)
+library(quanteda.textstats)
+library(quanteda.textplots)
+library(spacyr)
+library(seriation)
+```
+
+
+
+
+
+--------------------------------------------------------------------------------
+## ONE-TIME INITIAL SETUP
+--------------------------------------------------------------------------------
+
+```{r, include=FALSE, message=FALSE, eval=FALSE}
+posts_dec_jan <- read_csv("./data-gpt-dec-jan/!filtered-posts.csv")
+posts_feb_mar <- read_csv("./data-gpt-feb-mar/!filtered-posts.csv")
+comments_dec_jan <- read_csv("./data-gpt-dec-jan/!filtered-comments.csv")
+comments_feb_mar <- read_csv("./data-gpt-feb-mar/!filtered-comments.csv")
+
+combined_posts0 <- bind_rows(posts_dec_jan, posts_feb_mar)
+combined_comments0 <- bind_rows(comments_dec_jan, comments_feb_mar)
+
+write_csv(combined_posts0, "./data-gpt/!combined-posts.csv")
+write_csv(combined_comments0, "./data-gpt/!combined-comments.csv")
+```
+
+
+
+
+
+
+
+
+
+
+--------------------------------------------------------------------------------
+## START HERE
+--------------------------------------------------------------------------------
+
+```{r, include=FALSE, message=FALSE, eval=FALSE}
+combined_posts <- read_csv("./data-gpt/!combined-posts.csv") 
+combined_comments <- read_csv("./data-gpt/!combined-comments.csv")
+
+posts_names <- names(combined_posts)
+comments_names <- names(combined_comments)
+```
+
+```{r, include=FALSE, message=FALSE}
+posts_liwc <- 
+  read_csv("./data-gpt/!combined-posts-with-liwc.csv")
+names(posts_liwc)[1:length(posts_names)] <- posts_names
+posts_liwc <- 
+  posts_liwc %>%
+  filter(subreddit != "subreddit") %>%
+  mutate(num_comments = as.integer(num_comments),
+         post_score = as.integer(score),
+         upvote_ratio = as.double(upvote_ratio), 
+         post_date = as.Date(post_date_time)
+  )
+
+comments_liwc0 <- 
+  read_csv("./data-gpt/!combined-comments-with-liwc.csv", col_names = TRUE)
+names(comments_liwc0)[1:length(comments_names)] <- comments_names
+
+comments_liwc <- 
+  comments_liwc0 %>% 
+  rename(comment_date = date,
+         comment_text = comment) %>%
+  mutate(comment_score = as.integer(score),
+        comment_date = as.Date(comment_date, "%m/%d/%y")) %>%
+  select(-score)
+```
+
+```{r}
+ren <- c(
+  "r/education", "r/Teachers", "r/teachingresources", "r/edtech",
+  "r/AdultEducation", "r/ArtEd", "r/CSEducation", "r/ECEProfessionals",
+  "r/ELATeachers", "r/highereducation", "r/historyteachers", "r/itinerantteachers",
+  "r/matheducation", "r/MusicEd", "r/ScienceTeachers", "r/slp",
+  "r/specialed", "r/teacherspromote", "r/TeachersInTransition", "r/teaching",
+  "r/Professors", "r/academia", "r/instructionaldesign", "r/TeacherTales", 
+  "r/OnlineEducation"
+)
+
+#sub <- "education"
+#RedditExtractoR::find_subreddits(sub) %>% filter(subreddit == sub) %>% pull(subscribers)
+
+total_subscriber_n <-  # as of 4/5/2023
+  c(166688, 419352, 32329, 18441,
+    4155, 6173, 23733, 26200,
+    15990, 52686, 12847, 2,
+    24315, 15906, 37097, 37526,
+    13635, 468, 6063, 108342,
+    114965, 57860, 23641, 29919,
+    13973
+  )
+
+total_subscriber_n_feb2023 <-  # as of 2/3/2023
+  c(164749, 403896, 31648, 17958,
+    4098, 5856, 23578, 24555,
+    15632, 51991, 12607, 2,
+    23929, 15645, 36317, 36388,
+    12996, 453, 2912, 105219,
+    112194, 55607, 22858, 29695,
+    13743
+  )
+
+total_post_n_dec_jan <-  # as of 2/3/2023; covers Dec 2022 to Jan 2023
+  c(1220, 6386, 321, 116,
+    11, 95, 37, 560,
+    167, 280, 167, 6,
+    140, 143, 236, 1330,
+    207, 23, 248, 1192,
+    2074, 585, 370, 63,
+    198
+  )
+total_post_n_feb_mar <-  # as of 4/4/2023; covers Feb to Mar 2023
+  c(1170, 6912, 322, 142,
+    13, 103, 40, 724,
+    156, 394, 146, 0,
+    142, 149, 279, 1468,
+    330, 27, 648, 939,
+    1725, 747, 356, 71,
+    251
+  )
+
+total_post_n <- total_post_n_dec_jan + total_post_n_feb_mar
+
+subreddit_overall_info <- 
+  tibble(ren, total_subscriber_n, total_post_n) %>%
+  rename(subreddit = ren) %>%
+  arrange(subreddit)
+
+subreddit_overall_info
+```
+
+## Summarize Posts and Comments
+
+```{r}
+subreddit_comment_info <-
+  comments_liwc %>%
+  group_by(subreddit) %>%
+  summarize(comment_n = n(),
+            comment_WC_median = median(WC),
+            comment_score_median = median(comment_score)
+            )
+
+subreddit_post_info <-
+  posts_liwc %>%
+  group_by(subreddit) %>%
+  summarize(post_gpt_n = n(),
+            post_WC_median = median(WC),
+            post_score_median = median(post_score),
+            response_n = sum(num_comments > 0),
+            response_rate = round(100 * response_n / post_gpt_n, 2),
+            thread_length_median = median(num_comments),
+            post_upvote_ratio_median = median(upvote_ratio)
+            ) %>%
+  left_join(subreddit_comment_info, by = 'subreddit')
+```
+
+```{r}
+subreddit_info <-
+  subreddit_overall_info %>%
+  left_join(subreddit_post_info, by = 'subreddit') %>%
+  replace(is.na(.), 0) %>%
+  mutate(post_gpt_p = round(100 * post_gpt_n / total_post_n, 2)) %>%
+  relocate(subreddit:post_gpt_n, post_gpt_p)
+subreddit_info
+```
+
+```{r}
+first_post <-
+  posts_liwc %>% 
+  group_by(subreddit) %>%
+  summarize(earliest_gpt_date = min(date)) %>%
+  arrange(earliest_gpt_date)
+first_post
+```
+
+```{r}
+most_comments <-
+  posts_liwc %>% 
+  group_by(subreddit) %>%
+  summarize(max_comments = max(num_comments)) %>%
+  arrange(desc(max_comments))
+most_comments
+```
+
+```{r}
+most_words_post <-
+  posts_liwc %>% 
+  group_by(subreddit) %>%
+  summarize(max_words_post = max(WC)) %>%
+  arrange(desc(max_words_post))
+most_words_post
+```
+
+```{r}
+most_words_comment <-
+  comments_liwc %>% 
+  group_by(subreddit) %>%
+  summarize(max_words_comment = max(WC)) %>%
+  arrange(desc(max_words_comment))
+most_words_comment
+```
+
+```{r}
+subreddit_info_full <-
+  subreddit_info %>%
+  full_join(first_post, by = "subreddit") %>%
+  full_join(most_comments, by = "subreddit") %>%
+  full_join(most_words_post, by = "subreddit") %>%
+  full_join(most_words_comment, by = "subreddit") %>%
+  mutate(across(where(is.numeric), \(x) coalesce(x, 0))) %>%
+  arrange(desc(post_gpt_n))
+
+write_csv(subreddit_info_full, "output/subreddit-info-full.csv")
+
+subreddit_info_full
+```
+
+```{r}
+subreddit_info_full %>%
+  summarize(post_gpt_n = sum(post_gpt_n),
+            comment_n = sum(comment_n))
+```
+
+
+
+
+
+################################################################################
+
+```{r}
+# See https://sashamaps.net/docs/resources/20-colors/
+color_count <- length(unique(posts_liwc$subreddit))
+my_colors <-
+  c('#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231',
+             '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe', 
+             '#008080', '#e6beff', '#9a6324', '#800000', '#000075',
+             '#aaffc3', '#808000', '#ffd8b1', '#fffac8','#808080', 
+             '#000000', '#ffffff')[1:color_count]
+```
+
+
+ 
+################################################################################
+## Combining LIWC scores for Posts and Comments
+################################################################################
+
+```{r}
+posts_subset <- 
+  posts_liwc %>% 
+  select(subreddit, post_date, title, post_text, WC:death) %>%
+  mutate(type = "post", .after = subreddit) %>%
+  rename(text = post_text,
+         date = post_date) %>%
+  filter(date <= as.Date("2023-03-31"))
+comments_subset <- 
+  comments_liwc %>% 
+  select(subreddit, comment_date, comment_text, WC:death) %>%
+  mutate(type = "comment", .after = subreddit) %>%
+  rename(text = comment_text,
+         date = comment_date) %>%
+  filter(date <= as.Date("2023-03-31"))
+
+shared_vars <- names(posts_subset)[c(1:3, 5:41)]
+
+all_liwc <-
+  posts_subset %>%
+  full_join(comments_subset, by = shared_vars) %>%
+  rename(`Analytical Thinking` = Analytic,
+         Authenticity = Authentic,
+         `Emotional Tone` = Tone)
+
+all_liwc %>% group_by(type) %>% summarize(n())
+```
+
+
+
+################################################################################
+## Posts and Comments Over Time
+################################################################################
+
+
+```{r}
+all_days <- 
+  unique(all_liwc$subreddit) %>%
+  as_tibble() %>%
+  rename(subreddit = value) %>%
+  reframe(type = c("post", "comment"), .by = "subreddit") %>%
+  reframe(date = seq.Date(as.Date("2022-11-30"), as.Date("2023-03-31"), by = "days"),
+          .by = c("subreddit", "type")
+  )
+
+dates_by_type <- 
+  all_liwc %>%
+  add_count(date, type, subreddit) %>%
+  select(date, type, subreddit, n) %>%
+  distinct(date, type, subreddit, .keep_all = TRUE) %>%
+  mutate(type = factor(type, levels = c("post", "comment")))
+  #right_join(all_days, by = c("date", "type", "subreddit")) %>%
+  #mutate(across(where(is.numeric), \(x) coalesce(x, 0)),
+         #type_size = ifelse(type == "comment", 1.0, 2.0),
+         #type_alpha = ifelse(type == "comment", 0.3, 0.8))
+```
+
+```{r, message=FALSE, warning=FALSE}
+ggplot(data = dates_by_type, aes(x = date, y = n, group = type)) +
+  geom_point(size = 2.0, alpha = 0.5, aes(color = type)) + 
+  scale_color_manual(values = c(my_colors[15], my_colors[5]), name = "Type:") +
+  facet_wrap(vars(subreddit), ncol = 4, scales = "fixed") +
+  scale_x_date(breaks = scales::breaks_pretty(n = 5), date_minor_breaks = "1 month") +
+  scale_y_continuous(breaks = scales::breaks_pretty(n = 3)) +
+  xlab(NULL) +
+  ylab("Daily Count") +
+  theme_bw() +
+  theme(legend.position = 'bottom',
+        legend.title = element_text(size = 14, face = "bold"),
+        legend.text = element_text(size = 12),
+        legend.box.background = element_rect(colour = "black"),
+        axis.title.y = element_text(size = 14),
+        axis.text.y = element_text(size = 11),
+        strip.text = element_text(size = 11),
+        panel.spacing = unit(1.1, 'lines')) +
+  guides(color = guide_legend(override.aes = list(alpha = 0.8, size = 5.0)))
+```
+
+```{r, eval=FALSE}
+ggsave("output/liwc-posts-comments-over-time.png", width = 8, height = 8)
+```
+
+
+
+
+
+
+
+################################################################################
+## LIWC Summary Dimensions
+################################################################################
+
+```{r}
+liwc_posts_summary <-
+  all_liwc %>%
+  group_by(subreddit) %>%
+  summarize(`Analytical Thinking` = median(`Analytical Thinking`),
+            Clout = median(Clout),
+            Authenticity = median(Authenticity),
+            `Emotional Tone` = median(`Emotional Tone`)
+            ) %>%
+  pivot_longer(cols = `Analytical Thinking`:`Emotional Tone`,
+               names_to = "liwc_measure",
+               values_to = "liwc_score"
+  ) %>%
+  mutate(liwc_measure = 
+           factor(liwc_measure, 
+                  levels = c("Analytical Thinking", 
+                             "Clout", 
+                             "Authenticity", 
+                             "Emotional Tone")
+           ))
+```
+
+```{r}
+ggplot(data = liwc_posts_summary) +
+  geom_line(aes(x=liwc_measure, y=liwc_score, 
+                group=subreddit, color=subreddit)
+  ) +
+  scale_color_manual(values = my_colors)  +
+  xlab("LIWC measure") +
+  ylab("LIWC score") +
+  ggtitle("") +
+  theme_bw() +
+  theme(panel.grid.major = element_line(color = "gray90"),
+        panel.grid.minor = element_blank(),
+        axis.title=element_text(size=14, family='serif'),
+        axis.text=element_text(size=10, family='serif'),
+        legend.position='bottom',
+        legend.box = 'vertical',
+        legend.box.background = element_rect(),
+        legend.title=element_text(size=14, family='serif'), 
+        legend.text=element_text(size=10, family='serif')
+  ) +
+  guides(fill=guide_legend(nrow=3))
+```
+
+```{r, eval=FALSE}
+ggsave("output/liwc-summary.png", width = 8, height = 4.5)
+```
+
+################################################################################
+## LIWC Affect Dimensions
+################################################################################
+
+```{r}
+liwc_posts_affect <-
+  all_liwc %>%
+  group_by(subreddit) %>%
+  summarize(Positive_Emotions = median(posemo),
+            Negative_Emotions = median(negemo),
+            Anxiety = median(anx),
+            Anger = median(anger),
+            Sadness = median(sad)
+            ) %>%
+  pivot_longer(cols = Positive_Emotions:Sadness,
+               names_to = "liwc_measure",
+               values_to = "liwc_score"
+  ) %>%
+  mutate(liwc_measure = 
+           factor(liwc_measure, 
+                  levels = c("Positive_Emotions", "Negative_Emotions",
+                             "Anxiety", "Anger", "Sadness")))
+```
+
+```{r}
+ggplot(data = liwc_posts_affect) +
+  geom_line(aes(x=factor(liwc_measure), y=liwc_score, 
+                group=subreddit, color=subreddit)
+  ) +
+  scale_color_manual(values = my_colors)  +
+  xlab("LIWC measure") +
+  ylab("LIWC score") +
+  ggtitle("") +
+  theme_bw() +
+  theme(panel.grid.major = element_line(color = "gray90"),
+        panel.grid.minor = element_blank(),
+        axis.title=element_text(size=14, family='serif'),
+        axis.text=element_text(size=10, family='serif'),
+        legend.position='bottom',
+        legend.box = 'vertical',
+        legend.box.background = element_rect(),
+        legend.title=element_text(size=14, family='serif'), 
+        legend.text=element_text(size=10, family='serif')
+  ) +
+  guides(fill=guide_legend(nrow=3))
+```
+
+```{r, eval=FALSE}
+ggsave("output/liwc-affect.png", width = 8, height = 4.5)
+```
+
+################################################################################
+## Cognitive Processes
+################################################################################
+
+```{r}
+liwc_posts_cognitive <-
+  all_liwc %>%
+  group_by(subreddit) %>%
+  summarize(Overall = median(cogproc),
+            Insight = median(insight),
+            Causal = median(cause),
+            Discrepancies = median(discrep),
+            Tentative = median(tentat),
+            Certainty = median(certain),
+            Differentiation = median(differ)
+            ) %>%
+  pivot_longer(cols = Overall:Differentiation,
+               names_to = "liwc_measure",
+               values_to = "liwc_score"
+  ) %>%
+  mutate(liwc_measure = 
+           factor(liwc_measure, 
+                  levels = c("Overall", "Insight", "Causal", "Discrepancies",
+                             "Tentative", "Certainty", "Differentiation")))
+```
+
+```{r}
+ggplot(data = liwc_posts_cognitive) +
+  geom_line(aes(x=factor(liwc_measure), y=liwc_score, 
+                group=subreddit, color=subreddit)
+  ) +
+  scale_color_manual(values = my_colors)  +
+  xlab("LIWC measure") +
+  ylab("LIWC score") +
+  ggtitle("") +
+  theme_bw() +
+  theme(panel.grid.major = element_line(color = "gray90"),
+        panel.grid.minor = element_blank(),
+        axis.title=element_text(size=14, family='serif'),
+        axis.text=element_text(size=10, family='serif'),
+        legend.position='bottom',
+        legend.box = 'vertical',
+        legend.box.background = element_rect(),
+        legend.title=element_text(size=14, family='serif'), 
+        legend.text=element_text(size=10, family='serif')
+  ) +
+  guides(fill=guide_legend(nrow=3))
+```
+
+```{r, eval=FALSE}
+ggsave("output/liwc-cognitive.png", width = 8, height = 4.5)
+```
+
+################################################################################
+## Personal and Social Concerns
+################################################################################
+
+```{r}
+liwc_posts_personal <-
+  all_liwc %>%
+  group_by(subreddit) %>%
+  summarize(Work = median(work),
+            Leisure = median(leisure),
+            Home = median(home),
+            Money = median(money),
+            Social = median(social),
+            Family = median(family),
+            Friends = median(friend)
+            ) %>%
+  pivot_longer(cols = Work:Friends,
+               names_to = "liwc_measure",
+               values_to = "liwc_score"
+  ) %>%
+  mutate(liwc_measure = 
+           factor(liwc_measure, 
+                  levels = c("Work", "Leisure", "Home", "Money",
+                             "Social", "Family", "Friends")))
+```
+
+```{r}
+ggplot(data = liwc_posts_personal) +
+  geom_line(aes(x=factor(liwc_measure), y=liwc_score, 
+                group=subreddit, color=subreddit)
+  ) +
+  scale_color_manual(values = my_colors)  +
+  xlab("LIWC measure") +
+  ylab("LIWC score") +
+  ggtitle("") +
+  theme_bw() +
+  theme(panel.grid.major = element_line(color = "gray90"),
+        panel.grid.minor = element_blank(),
+        axis.title=element_text(size=14, family='serif'),
+        axis.text=element_text(size=10, family='serif'),
+        legend.position='bottom',
+        legend.box = 'vertical',
+        legend.box.background = element_rect(),
+        legend.title=element_text(size=14, family='serif'), 
+        legend.text=element_text(size=10, family='serif')
+  ) +
+  guides(fill=guide_legend(nrow=3))
+```
+
+```{r, eval=FALSE}
+ggsave("output/liwc-personal.png", width = 8, height = 4.5)
+```
+
+################################################################################
+## Time Orientation
+################################################################################
+
+```{r}
+liwc_posts_time <-
+  all_liwc %>%
+  group_by(subreddit) %>%
+  summarize(Past_Focus = median(focuspast),
+            Present_Focus = median(focuspresent),
+            Future_Focus = median(focusfuture)
+            ) %>%
+  pivot_longer(cols = Past_Focus:Future_Focus,
+               names_to = "liwc_measure",
+               values_to = "liwc_score"
+  ) %>%
+  mutate(liwc_measure = 
+           factor(liwc_measure, 
+                  levels = c("Past_Focus", "Present_Focus", "Future_Focus")))
+```
+
+```{r}
+ggplot(data = liwc_posts_time) +
+  geom_line(aes(x=factor(liwc_measure), y=liwc_score, 
+                group=subreddit, color=subreddit)
+  ) +
+  scale_color_manual(values = my_colors)  +
+  xlab("LIWC measure") +
+  ylab("LIWC score") +
+  ggtitle("") +
+  theme_bw() +
+  theme(panel.grid.major = element_line(color = "gray90"),
+        panel.grid.minor = element_blank(),
+        axis.title=element_text(size=14, family='serif'),
+        axis.text=element_text(size=10, family='serif'),
+        legend.position='bottom',
+        legend.box = 'vertical',
+        legend.box.background = element_rect(),
+        legend.title=element_text(size=14, family='serif'), 
+        legend.text=element_text(size=10, family='serif')
+  ) +
+  guides(fill=guide_legend(nrow=3))
+```
+
+```{r, eval=FALSE}
+ggsave("output/liwc-time.png", width = 8, height = 4.5)
+```
+
+
+
+
+
+################################################################################
+## LIWC Measures in Focused Subreddits
+################################################################################
+
+```{r}
+focus_subreddits <- 
+  c("r/Teachers", "r/education",
+    "r/Professors", "r/teaching",
+    "r/academia", "r/highereducation")
+
+subset_liwc <-
+  all_liwc %>%
+  filter(subreddit %in% focus_subreddits)
+```
+
+## LIWC Summary Dimensions
+
+```{r}
+liwc_posts_subset_summary <-
+  subset_liwc %>%
+  group_by(subreddit) %>%
+  summarize(`Analytical Thinking` = median(`Analytical Thinking`),
+            Clout = median(Clout),
+            Authenticity = median(Authenticity),
+            `Emotional Tone` = median(`Emotional Tone`)
+            ) %>%
+  pivot_longer(cols = `Analytical Thinking`:`Emotional Tone`,
+               names_to = "liwc_measure",
+               values_to = "liwc_score"
+  ) %>%
+  mutate(liwc_measure = 
+           factor(liwc_measure, 
+                  levels = c("Analytical Thinking", 
+                             "Clout", 
+                             "Authenticity", 
+                             "Emotional Tone")
+           ))
+```
+
+## LIWC Affect Dimensions
+
+```{r}
+liwc_posts_subset_affect <-
+  subset_liwc %>%
+  group_by(subreddit) %>%
+  summarize(`Positive Emotions` = median(posemo),
+            `Negative Emotions` = median(negemo),
+            Anxiety = median(anx),
+            Anger = median(anger),
+            Sadness = median(sad)
+            ) %>%
+  pivot_longer(cols = `Positive Emotions`:Sadness,
+               names_to = "liwc_measure",
+               values_to = "liwc_score"
+  ) %>%
+  mutate(liwc_measure = 
+           factor(liwc_measure, 
+                  levels = c("Positive Emotions", "Negative Emotions",
+                             "Anxiety", "Anger", "Sadness")),
+         liwc_category = "Affect")
+```
+
+## Cognitive Processes
+
+```{r}
+liwc_posts_subset_cognitive <-
+  subset_liwc %>%
+  group_by(subreddit) %>%
+  summarize(`Overall Cognitive` = median(cogproc),
+            Insight = median(insight),
+            Causal = median(cause),
+            Discrepancies = median(discrep),
+            Tentative = median(tentat),
+            Certainty = median(certain),
+            Differentiation = median(differ)
+            ) %>%
+  pivot_longer(cols = `Overall Cognitive`:Differentiation,
+               names_to = "liwc_measure",
+               values_to = "liwc_score"
+  ) %>%
+  mutate(liwc_measure = 
+           factor(liwc_measure, 
+                  levels = c("Overall Cognitive", "Insight", "Causal", "Discrepancies",
+                             "Tentative", "Certainty", "Differentiation")),
+         liwc_category = "Cognitive")
+```
+
+## Personal and Social Concerns
+
+```{r}
+liwc_posts_subset_personal <-
+  subset_liwc %>%
+  group_by(subreddit) %>%
+  summarize(Work = median(work),
+            Leisure = median(leisure),
+            Home = median(home),
+            Money = median(money),
+            Social = median(social),
+            Family = median(family),
+            Friends = median(friend)
+            ) %>%
+  pivot_longer(cols = Work:Friends,
+               names_to = "liwc_measure",
+               values_to = "liwc_score"
+  ) %>%
+  mutate(liwc_measure = 
+           factor(liwc_measure, 
+                  levels = c("Work", "Leisure", "Home", "Money",
+                             "Social", "Family", "Friends")),
+         liwc_category = "Personal")
+```
+
+## Combine All LIWC Measures
+
+```{r}
+liwc_subset <-
+  liwc_posts_subset_summary %>%
+  bind_rows(liwc_posts_subset_affect) %>%
+  bind_rows(liwc_posts_subset_cognitive) %>%
+  bind_rows(liwc_posts_subset_personal) %>%
+  rename(Subreddit = subreddit)
+```
+
+## Visualize Subset of Subreddits
+
+```{r}
+my_colors6 <- my_colors[c(2, 4, 5, 6, 7, 8)]
+```
+
+```{r}
+ggplot(data = liwc_subset) +
+  geom_line(alpha = 0.5,
+            linewidth = 1.5,
+            aes(x=factor(liwc_measure), y=liwc_score, 
+                group=Subreddit, color=Subreddit)
+  ) +
+  scale_color_manual(values = my_colors6) +
+  xlab("LIWC measure") +
+  ylab("LIWC score") +
+  ggtitle("") +
+  theme_bw() +
+  theme(panel.grid.major = element_line(color = "gray90"),
+        panel.grid.minor = element_blank(),
+        axis.title = element_text(size=18, family='serif'),
+        axis.text = element_text(size=14, family='serif'),
+        legend.position = 'bottom',
+        legend.box = 'vertical',
+        legend.box.background = element_rect(),
+        legend.title=element_text(size=18, family='serif'), 
+        legend.text=element_text(size=14, family='serif'),
+        axis.text.x = element_text(angle=60, hjust=1)
+  ) +
+  guides(color = guide_legend(override.aes = list(alpha = 0.8, linewidth = 2.0)))
+```
+
+```{r, eval=FALSE}
+ggsave("output/liwc-subset.png", width = 8, height = 6)
+```
+
+
+
+```{r}
+liwc_subset2 <-
+  liwc_subset %>%
+  filter(liwc_measure %in% c("Analytical Thinking", "Clout",
+                             "Authenticity", "Emotional Tone"))
+```
+
+```{r}
+ggplot(data = liwc_subset2) +
+  geom_line(alpha = 0.8,
+            linewidth = 1.5,
+            aes(x=factor(liwc_measure), y=liwc_score, 
+                group=Subreddit, color=Subreddit)
+  ) +
+  scale_color_manual(values = my_colors6) +
+  xlab("LIWC measure") +
+  ylab("LIWC score") +
+  ggtitle("") +
+  theme_bw() +
+  theme(panel.grid.major = element_line(color = "gray90"),
+        panel.grid.minor = element_blank(),
+        axis.title = element_text(size=18, family='serif'),
+        axis.text = element_text(size=14, family='serif'),
+        legend.position = 'bottom',
+        legend.box = 'vertical',
+        legend.box.background = element_rect(),
+        legend.title=element_text(size=18, family='serif'), 
+        legend.text=element_text(size=14, family='serif')
+  ) +
+  guides(color = guide_legend(override.aes = list(alpha = 0.8, linewidth = 2.0)))
+```
+
+```{r, eval=FALSE}
+ggsave("output/liwc-subset-zoom.png", width = 8, height = 6)
+```
+
+```{r}
+ggplot(data = liwc_subset2,
+       aes(x=factor(liwc_measure), y=liwc_score, 
+                group=Subreddit, color=Subreddit)
+) +
+  geom_point(size = 5) + 
+  geom_segment(linewidth = 2,
+                aes(x=factor(liwc_measure), 
+                    xend = factor(liwc_measure), 
+                    y = 0, 
+                    yend = liwc_score)) +
+  coord_flip() +
+  facet_wrap(vars(Subreddit), nrow = 2) +
+  scale_color_manual(values = my_colors6) +
+  xlab("LIWC measure") +
+  scale_x_discrete(limits=rev) +
+  ylab("LIWC score") +
+  ylim(0, 80) +
+  theme_bw() +
+  theme(panel.grid.major = element_line(color = "gray90"),
+        panel.grid.minor = element_blank(),
+        axis.title = element_text(size=18, family='serif'),
+        axis.text = element_text(size=14, family='serif'),
+        strip.text = element_text(size=14, family='serif'),
+        legend.position = 'none'
+  )
+```
+
+```{r, eval=FALSE}
+ggsave("output/liwc-subset-lollipop.png", width = 8, height = 6)
+```
+
+
+
+```{r}
+liwc_subset3 <-
+  liwc_subset %>%
+  filter(liwc_measure %in% c("Social", "Overall Cognitive", "Work", "Positive Emotions", "Negative Emotions"))
+```
+
+```{r}
+ggplot(data = liwc_subset3) +
+  geom_line(alpha = 0.8,
+            linewidth = 1.5,
+            aes(x=factor(liwc_measure), y=liwc_score, 
+                group=Subreddit, color=Subreddit)
+  ) +
+  scale_color_manual(values = my_colors6) +
+  xlab("LIWC measure") +
+  ylab("LIWC score") +
+  ggtitle("") +
+  theme_bw() +
+  theme(panel.grid.major = element_line(color = "gray90"),
+        panel.grid.minor = element_blank(),
+        axis.title = element_text(size=18, family='serif'),
+        axis.text = element_text(size=14, family='serif'),
+        legend.position = 'bottom',
+        legend.box = 'vertical',
+        legend.box.background = element_rect(),
+        legend.title=element_text(size=18, family='serif'), 
+        legend.text=element_text(size=14, family='serif')
+  )
+```
+
+
+
+
+
+################################################################################
+## Text Analysis
+################################################################################
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, eval=FALSE}
+#spacyr::spacy_install()
+spacy_initialize(model = "en_core_web_sm")
+```
+
+```{r, echo=FALSE}
+singularize <- function (x) {
+  spacyr::spacy_parse(x, tag = TRUE) %>%
+    mutate(token = ifelse(tag == "NNS",
+                          lemma,
+                          token)
+           ) %>%
+    group_by(doc_id) %>% 
+    summarize(text = paste0(token, collapse = " ")) %>%
+    quanteda::corpus()
+}
+```
+
+```{r, echo=FALSE} 
+my_extra_stopwords <-
+  c("NA", "just", "also", "can", "like", "etc", "lot", "many", "much", 
+    "even", "sure", "n't", "re", "ve"
+  )
+
+my_compound_words <-
+  c("computer science", "information science", "data science",
+    "information technology", "information system", 
+    "computer engineering", "computer system", "computer network",
+    "computer security", "information security", "network security",
+    "natural language processing", "artificial intelligence", "machine learning",
+    "large language model", "generative ai",
+    "data analytics", "learning analytics", "big data"
+)
+```
+
+```{r}
+subreddit_post_text_all <-
+  posts_liwc %>%
+  filter(subreddit != "r/Professors") %>%
+  mutate(post_text = paste(title, post_text)) %>%
+  group_by(subreddit) %>%
+  summarize(all_post_text = paste(post_text, collapse = " "))
+subreddit_comments_text_all <- 
+  comments_liwc %>%
+  filter(subreddit != "r/Professors") %>%
+  group_by(subreddit) %>%
+  summarize(all_comment_text = paste(comment_text, collapse = " "))
+subreddit_text_all <-
+  subreddit_post_text_all %>%
+  full_join(subreddit_comments_text_all, by = "subreddit") %>%
+  group_by(subreddit) %>%
+  summarize(all_text = paste(all_post_text, all_comment_text, collapse = " "))
+```
+
+```{r}
+subreddit_post_text_prof <-
+  posts_liwc %>%
+  filter(subreddit == "r/Professors") %>%
+  mutate(post_text = paste(title, post_text)) %>%
+  group_by(subreddit) %>%
+  summarize(all_text = paste(post_text, collapse = " "))
+subreddit_comment_text_prof1 <- 
+  comments_liwc %>%
+  filter(subreddit == "r/Professors") %>%
+  head(2000) %>%
+  group_by(subreddit) %>%
+  summarize(all_text = paste(comment_text, collapse = " "))
+subreddit_comment_text_prof2 <- 
+  comments_liwc %>%
+  filter(subreddit == "r/Professors") %>%
+  tail(1829) %>%
+  group_by(subreddit) %>%
+  summarize(all_text = paste(comment_text, collapse = " "))
+```
+
+```{r, echo=FALSE}
+dfm_terms_all <-
+  subreddit_text_all %>%
+  quanteda::corpus(text_field = 'all_text',
+                   docid_field = 'subreddit') %>%
+  singularize() %>%
+  quanteda::tokens(
+    remove_separators = TRUE,
+    remove_punct = TRUE,
+    remove_symbols = TRUE,
+    remove_numbers = TRUE,
+    remove_url = TRUE) %>%
+  quanteda::tokens_select(min_nchar = 2L) %>% #Filter: at least 2 letters 
+  quanteda::tokens_compound(phrase(my_compound_words)) %>%
+  quanteda::dfm(tolower = TRUE) %>%
+  quanteda::dfm_remove(c(my_extra_stopwords,
+                 quanteda::stopwords("english")))
+
+dfm_terms_all$subreddit <- unique(subreddit_text_all$subreddit)
+
+quanteda::ndoc(dfm_terms_all); quanteda::nfeat(dfm_terms_all)
+```
+
+```{r, echo=FALSE}
+dfm_terms_post_prof <-
+  subreddit_post_text_prof %>%
+  quanteda::corpus(text_field = 'all_text',
+                   docid_field = 'subreddit') %>%
+  singularize() %>%
+  quanteda::tokens(
+    remove_separators = TRUE,
+    remove_punct = TRUE,
+    remove_symbols = TRUE,
+    remove_numbers = TRUE,
+    remove_url = TRUE) %>%
+  quanteda::tokens_select(min_nchar = 2L) %>% #Filter: at least 2 letters 
+  quanteda::tokens_compound(phrase(my_compound_words)) %>%
+  quanteda::dfm(tolower = TRUE) %>%
+  quanteda::dfm_remove(c(my_extra_stopwords,
+                 quanteda::stopwords("english")))
+
+dfm_terms_post_prof$subreddit <- "r/Professors"
+
+quanteda::ndoc(dfm_terms_post_prof); quanteda::nfeat(dfm_terms_post_prof)
+```
+
+```{r, echo=FALSE}
+dfm_terms_comment_prof1 <-
+  subreddit_comment_text_prof1 %>%
+  quanteda::corpus(text_field = 'all_text',
+                   docid_field = 'subreddit') %>%
+  singularize() %>%
+  quanteda::tokens(
+    remove_separators = TRUE,
+    remove_punct = TRUE,
+    remove_symbols = TRUE,
+    remove_numbers = TRUE,
+    remove_url = TRUE) %>%
+  quanteda::tokens_select(min_nchar = 2L) %>% #Filter: at least 2 letters 
+  quanteda::tokens_compound(phrase(my_compound_words)) %>%
+  quanteda::dfm(tolower = TRUE) %>%
+  quanteda::dfm_remove(c(my_extra_stopwords,
+                 quanteda::stopwords("english")))
+
+dfm_terms_comment_prof1$subreddit <- "r/Professors"
+
+quanteda::ndoc(dfm_terms_comment_prof1); quanteda::nfeat(dfm_terms_comment_prof1)
+```
+
+```{r, echo=FALSE}
+dfm_terms_comment_prof2 <-
+  subreddit_comment_text_prof2 %>%
+  quanteda::corpus(text_field = 'all_text',
+                   docid_field = 'subreddit') %>%
+  singularize() %>%
+  quanteda::tokens(
+    remove_separators = TRUE,
+    remove_punct = TRUE,
+    remove_symbols = TRUE,
+    remove_numbers = TRUE,
+    remove_url = TRUE) %>%
+  quanteda::tokens_select(min_nchar = 2L) %>% #Filter: at least 2 letters 
+  quanteda::tokens_compound(phrase(my_compound_words)) %>%
+  quanteda::dfm(tolower = TRUE) %>%
+  quanteda::dfm_remove(c(my_extra_stopwords,
+                 quanteda::stopwords("english")))
+
+dfm_terms_comment_prof2$subreddit <- "r/Professors"
+
+quanteda::ndoc(dfm_terms_comment_prof2); quanteda::nfeat(dfm_terms_comment_prof2)
+```
+
+```{r, echo=FALSE, message=FALSE}
+term_freq_all <- 
+  quanteda.textstats::textstat_frequency(dfm_terms_all, n = 100000, groups = subreddit) %>%
+  rename(term = feature, subreddit = group)
+term_freq_30 <- 
+  quanteda.textstats::textstat_frequency(dfm_terms_all, n = 30, groups = subreddit) %>%
+  rename(term = feature, subreddit = group)
+
+term_freq_post_prof_all <- 
+  quanteda.textstats::textstat_frequency(dfm_terms_post_prof, n = 100000, groups = subreddit) %>%
+  rename(term = feature, subreddit = group)
+term_freq_post_prof_30 <- 
+  quanteda.textstats::textstat_frequency(dfm_terms_post_prof, n = 30, groups = subreddit) %>%
+  rename(term = feature, subreddit = group)
+
+term_freq_comment_prof1_all <- 
+  quanteda.textstats::textstat_frequency(dfm_terms_comment_prof1, n = 100000, groups = subreddit) %>%
+  rename(term = feature, subreddit = group)
+term_freq_comment_prof1_30 <- 
+  quanteda.textstats::textstat_frequency(dfm_terms_comment_prof1, n = 30, groups = subreddit) %>%
+  rename(term = feature, subreddit = group)
+
+term_freq_comment_prof2_all <- 
+  quanteda.textstats::textstat_frequency(dfm_terms_comment_prof2, n = 100000, groups = subreddit) %>%
+  rename(term = feature, subreddit = group)
+term_freq_comment_prof2_30 <- 
+  quanteda.textstats::textstat_frequency(dfm_terms_comment_prof2, n = 30, groups = subreddit) %>%
+  rename(term = feature, subreddit = group)
+
+term_freq_df <- 
+  term_freq_all %>%
+  bind_rows(term_freq_post_prof_all) %>%
+  bind_rows(term_freq_comment_prof1_all) %>%
+  bind_rows(term_freq_comment_prof2_all) %>%
+  group_by(subreddit, term) %>%
+  summarize(frequency = sum(frequency)) %>%
+  ungroup()
+
+term_freq_df_30 <- 
+  term_freq_30 %>%
+  bind_rows(term_freq_post_prof_30) %>%
+  bind_rows(term_freq_comment_prof1_30) %>%
+  bind_rows(term_freq_comment_prof2_30) %>%
+  group_by(subreddit, term) %>%
+  summarize(frequency = sum(frequency)) %>%
+  ungroup()
+```
+
+```{r, echo=FALSE} 
+term_freq_subset_all <-
+  term_freq_df %>%
+  filter(subreddit %in% focus_subreddits)
+length(unique(term_freq_subset_all$term))
+
+term_freq_subset_30 <-
+  term_freq_df_30 %>%
+  filter(subreddit %in% focus_subreddits)
+length(unique(term_freq_subset_30$term))
+
+top30terms <- unique(term_freq_subset_30$term)
+
+term_freq <-
+  term_freq_subset_all %>%
+  filter(term %in% top30terms) %>%
+  tidyr::complete(term, subreddit, fill = list(frequency = 0)) %>%
+  group_by(subreddit) %>%
+  mutate(frequency = as.numeric(scale(frequency, center = FALSE))) %>%
+  ungroup() %>%
+  select(term, subreddit, frequency)
+```
+
+```{r, echo=FALSE} 
+term_freq_seriated <-
+  term_freq %>%
+  pivot_wider(names_from = term, values_from = frequency) %>%
+  column_to_rownames("subreddit") %>%
+  seriation::seriate(method = "PCA")
+  
+terms_ordered <-
+  unique(term_freq$term)[seriation::get_order(term_freq_seriated, dim=2)]
+subreddits_ordered <-
+  unique(term_freq$subreddit)[seriation::get_order(term_freq_seriated, dim=1)]
+
+term_freq_to_plot <-
+  term_freq %>%
+  mutate(
+    term = factor(term, levels = rev(terms_ordered)),
+    subreddit = factor(subreddit, levels = subreddits_ordered)
+  )
+```
+
+```{r, echo=FALSE} 
+ggplot(term_freq_to_plot, aes(x = subreddit, y = term)) +
+  geom_tile(aes(fill = frequency), color = 'white') + 
+  scale_fill_viridis(name = "Frequency:",
+                     rescaler = 
+                       function(x, to = c(0, 1), from = NULL) {
+                         ifelse(x < 2.5, 
+                                scales::rescale(x,
+                                                to = to,
+                                                from = c(min(x, na.rm = TRUE), 2.5)), 
+                                1)
+                       }) +
+  theme_bw() +
+  scale_x_discrete(position = "top") +
+  xlab(NULL) +
+  theme(legend.title = element_text(size = 12, face = "bold"),
+        axis.text.x = element_text(face = "bold"),
+        legend.text = element_text(size = 10),
+        legend.box.background = element_rect(colour = "black")
+  )
+```
+
+```{r, eval=FALSE}
+ggsave("output/term-frequency-plot.png", width = 8, height = 8)
+```

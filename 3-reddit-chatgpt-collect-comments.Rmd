@@ -1,0 +1,70 @@
+---
+title: "Generative AI Generating Buzz: Volume, Engagement, and Content of Initial Reactions to ChatGPT in Discussions Across Education-Related Subreddits"
+author: "Bret Staudt Willet"
+date: "2023-04-04"
+output: html_document
+---
+
+## Set Up
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(RedditExtractoR)
+library(anytime)
+library(lubridate)
+library(beepr)
+```
+
+## Get Comments
+
+```{r, message=FALSE}
+posts2 <- read_csv("./data-gpt/!filtered-posts.csv")
+```
+
+```{r function, eval=FALSE}
+subreddit_vector <- unique(posts2$subreddit)
+
+comments_with_subreddit <-
+  function(x) {
+    tmp_comments <-  
+      posts2 %>%
+      filter(subreddit == x) %>%
+      pull(post_url) %>%
+      RedditExtractoR::get_thread_content() %>%
+      `[[`(2)
+    if(is.data.frame(tmp_comments)) {
+      tmp_comments <-
+        tmp_comments %>%
+        mutate(subreddit = x,
+               comment_id = as.character(comment_id))
+    }
+    return(tmp_comments)
+  }
+```
+
+```{r get-comments, eval=FALSE}
+comments_list <- list()
+for(i in seq_along(subreddit_vector)) {
+  print(i)
+  comments_list[[i]] <- comments_with_subreddit(subreddit_vector[i])
+}
+beepr::beep(8)
+```
+
+```{r filter-comments, eval=FALSE}
+all_comments <- 
+  bind_rows(comments_list, .id = "column_label")
+
+filtered_comments <-
+  all_comments %>%
+  filter(comment != "[deleted]",
+         comment!= "[removed]")
+
+nrow(all_comments); nrow(filtered_comments)
+```
+
+```{r, eval=FALSE}
+write_csv(all_comments, "./data-gpt/!all-comments.csv")
+write_csv(filtered_comments, "./data-gpt/!filtered-comments.csv")
+```
